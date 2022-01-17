@@ -19,44 +19,33 @@ import config
 random = SystemRandom()
 
 
-def check_delivery(metrics: dict):
+def check_mail(destination):
     subject_identifier = ''.join(random.choice(ascii_letters + digits) for i in range(30))
-    subject = config.TEST_MAIL['subject'].format(subject_identifier)
+    subject = f"testmail {subject_identifier}"
 
-    before_send = datetime.now()
-    send_test_message(subject)
-    after_send = datetime.now()
-
-    send_time_seconds = (after_send - before_send).total_seconds()
-    metrics['send_time_seconds'] = send_time_seconds
+    send_test_message(subject, destination)
 
     retry = 0
     while True:
         sleep(2)
 
         logging.info('trying to fetch test mail, retry %s', retry)
-        date = get_email_date(subject)
+        date = get_email_date(subject, destination)
         if date:
             break
         retry += 1
         if retry > config.MAX_RETRIES:
             logging.error('failed to fetch test mail')
-            return
+            return False
 
     if not date:
         logging.error('failed to get the date of the last email')
-        return
+        return False
 
-    after_receive = datetime.now()
-    receive_time_seconds = (after_receive - after_send).total_seconds()
-    metrics['receive_time_seconds'] = receive_time_seconds
-
-    metrics['mail_timestamp'] = date.timestamp()
-
-    metrics['success'] = True
+    return True
 
 
-def get_email_date(subject: str) -> Optional[datetime]:
+def get_email_date(subject, destination):
     """
     Get the date of the email with specified subject and delete it.
 
@@ -64,11 +53,11 @@ def get_email_date(subject: str) -> Optional[datetime]:
     """
     most_recent_date = None
 
-    with IMAP4_SSL(config.IMAP['host']) as conn:
-        conn.login(config.IMAP['user'], config.IMAP['password'])
-        conn.select(config.IMAP['mailbox'])
+    with IMAP4_SSL(destination['host']) as conn:
+        conn.login(destination['user'], destination['password'])
+        conn.select(destination['mailbox'])
 
-        logging.info('connected to mailbox %s', config.IMAP['mailbox'])
+        logging.info('connected to mailbox %s', destination['mailbox'])
 
         state, matches = conn.search(None, '(SUBJECT "{}")'.format(subject))
         if state != 'OK':
@@ -97,94 +86,57 @@ def get_email_date(subject: str) -> Optional[datetime]:
     return most_recent_date
 
 
-def send_test_message(subject: str):
+def send_test_message(subject, destination):
     mail = MIMEText(
         'This is a test email. Its sole purpose is to act as a test email\n'
         'whose existence will confirm that email delivery is working\n'
         'as it should.')
     mail['Subject'] = subject
-    mail['From'] = config.TEST_MAIL['sender']
-    mail['To'] = config.TEST_MAIL['recipient']
+    mail['From'] = config.source['sender']
+    mail['To'] = destination['recipient']
     mail['Date'] = format_datetime(datetime.utcnow())
-    with SMTP(config.SMTP['host'], config.SMTP['port']) as smtp:
-        smtp_user = config.SMTP.get('user')
-        smtp_password = config.SMTP.get('password')
-        smtp_tls = config.SMTP.get('tls')
+    with SMTP(config.source['host'], config.source['port']) as smtp:
+        smtp_user = config.source.get('user')
+        smtp_password = config.source.get('password')
+        smtp_tls = config.source.get('tls')
         if smtp_tls:
             smtp.starttls()
         if smtp_user and smtp_password:
             smtp.login(smtp_user, smtp_password)
 
         smtp.sendmail(
-            config.TEST_MAIL['sender'],
-            config.TEST_MAIL['recipient'],
+            config.source['sender'],
+            destination['recipient'],
             mail.as_string())
     logging.info('sent test email with subject "%s"', subject)
 
 
-def write_textfile(metrics: dict):
+def write_textfile(results):
     with NamedTemporaryFile(mode='w', delete=False) as textfile:
-        total_duration = metrics.pop('total_duration', None)
-        if total_duration is not None:
-            textfile.write(
-                '# HELP probe_duration_seconds The total duration of the probe\n')
-            textfile.write('# TYPE probe_duration_seconds gauge\n')
-            textfile.write('probe_duration_seconds {}\n'.format(total_duration))
-
-        send_duration = metrics.pop('send_time_seconds', None)
-        if send_duration is not None:
-            textfile.write(
-                '# HELP probe_send_time_seconds The duration of sending the email\n')
-            textfile.write('# TYPE probe_send_time_seconds gauge\n')
-            textfile.write('probe_send_time_seconds {}\n'.format(send_duration))
-
-        receive_duration = metrics.pop('receive_time_seconds', None)
-        if receive_duration is not None:
-            textfile.write(
-                '# HELP probe_receive_time_seconds The duration of receiving the email '
-                'from the IMAP mailbox\n')
-            textfile.write('# TYPE probe_receive_time_seconds gauge\n')
-            textfile.write('probe_receive_time_seconds {}\n'.format(receive_duration))
-
-        mail_timestamp = metrics.pop('mail_timestamp', None)
-        if mail_timestamp is not None:
-            textfile.write(
-                '# HELP probe_mail_timestamp The timestamp of the email\n')
-            textfile.write('# TYPE probe_mail_timestamp gauge\n')
-            textfile.write('probe_mail_timestamp {}\n'.format(mail_timestamp))
-
-        success = metrics.pop('success', None)
-        if success is not None:
+        for result in results:
             textfile.write(
                 '# HELP probe_success Whether the mail delivery was successful\n')
             textfile.write('# TYPE probe_success gauge\n')
-            textfile.write('probe_success {}\n'.format(int(success)))
+            textfile.write('probe_success_{} {}\n'.format(result, int(results[result])))
 
         textfile.flush()
         os.fsync(textfile.fileno())
         file_name = textfile.name
     os.rename(file_name, config.TEXTFILE_PATH)
 
-    if metrics:
-        logging.warning('unhandled metrics remaining! %s', metrics)
-
 
 if __name__ == '__main__':
     logging.basicConfig(
         format='%(asctime)-15s: %(message)s', level=config.LOG_LEVEL)
 
-    start = datetime.now()
+    result = False
+    results = {}
+    for destination in config.destinations:
+        try:
+            if config.destinations[destination]['enabled']:
+                results[destination] = check_mail(config.destinations[destination])
+        except Exception:
+            logging.error('a failure occured: %s', traceback.format_exc())
+            results[destination] = False
 
-    metrics = {}
-    try:
-        check_delivery(metrics)
-    except Exception:
-        logging.error('a failure occured: %s', traceback.format_exc())
-        metrics = {
-            'success': False
-        }
-
-    end = datetime.now()
-    metrics['total_duration'] = (end - start).total_seconds()
-
-    write_textfile(metrics)
+    write_textfile(results)

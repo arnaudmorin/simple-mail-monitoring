@@ -1,27 +1,35 @@
 import logging
 
 # smtp smarthost to use for relay; this should not be the same host as the receiving server!
-SMTP = {
-    'host': 'localhost',
-    'port': 25,
-    #'user': 'user@example',
-    #'password': 'foobar123',
-    #'tls': False,
+source = {
+    'host': 'mail.server.com',
+    'port': 587,
+    'user': 'server@mail.server.com',
+    'sender': 'server@mail.server.com',
+    'password': '0987qwerty',
+    'tls': True,
 }
 
-IMAP = {
-    'host': 'monitored-mailhost.example',
-    'user': 'monitoringtest@example.org',
-    'password': 'foobar123',
-    'mailbox': 'INBOX',
-}
-
-TEST_MAIL = {
-    'sender': 'monitoring-host@monitoring.example.org',
-    'recipient': IMAP['user'],
-    'subject': 'Test-Email {}',
+destinations = {
+    'gmail': {
+        'enabled': True,
+        'host': 'imap.gmail.com',
+        'user': 'user@gmail.com',
+        'recipient': 'user@gmail.com',
+        'password': '2345',
+        'mailbox': 'INBOX',
+    },
+    'yahoo': {
+        'enabled': True,
+        'host': 'imap.mail.yahoo.com',
+        'user': 'user@yahoo.com',
+        'recipient': 'user@yahoo.com',
+        'password': '1234',
+        'mailbox': 'INBOX',
+    },
 }
 
 MAX_RETRIES = 30
 LOG_LEVEL = logging.INFO
-TEXTFILE_PATH = '/opt/prometheus/textfiles/mail_delivery.prom'
+TEXTFILE_PATH = '/tmp/mail_delivery.prom'
+
