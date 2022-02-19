@@ -119,6 +119,11 @@ def write_textfile(results):
             textfile.write('# TYPE probe_success gauge\n')
             textfile.write('probe_success_{} {}\n'.format(result, int(results[result])))
 
+        textfile.write(
+            '# HELP last_execution_ts Timestamp of last execution\n')
+        textfile.write('# TYPE last_execution_ts gauge\n')
+        textfile.write('last_execution_ts {}\n'.format(datetime.now().timestamp()))
+
         textfile.flush()
         os.fsync(textfile.fileno())
         file_name = textfile.name
